@@ -326,6 +326,11 @@ private:
         CreateConstantBuffer();
         CreateCBVHeap();
 
+#ifdef ENABLE_SUPERSAMPLING
+        CreateOffscreenRT();
+        CreateDownsamplePipeline(shaderPath);
+#endif
+
         m_lastTime = std::chrono::steady_clock::now();
         m_cameraPosition = XMVectorSet(0.0f, 0.0f, -6.0f, 0.0f);
     }
@@ -496,11 +501,212 @@ private:
         m_device->CreateConstantBufferView(&cbvDesc, m_cbvHeap->GetCPUDescriptorHandleForHeapStart());
     }
 
+#ifdef ENABLE_SUPERSAMPLING
+    void CreateOffscreenRT()
+    {
+        D3D12_HEAP_PROPERTIES heapProps = {};
+        heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        heapProps.CreationNodeMask = 1;
+        heapProps.VisibleNodeMask = 1;
+
+        D3D12_RESOURCE_DESC rtDesc = {};
+        rtDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rtDesc.Width = SSWidth;
+        rtDesc.Height = SSHeight;
+        rtDesc.DepthOrArraySize = 1;
+        rtDesc.MipLevels = 1;
+        rtDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        rtDesc.SampleDesc.Count = 1;
+        rtDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        rtDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        D3D12_CLEAR_VALUE clearValue = {};
+        clearValue.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        clearValue.Color[0] = 0.1f;
+        clearValue.Color[1] = 0.15f;
+        clearValue.Color[2] = 0.25f;
+        clearValue.Color[3] = 1.0f;
+
+        ThrowIfFailed(m_device->CreateCommittedResource(
+            &heapProps,
+            D3D12_HEAP_FLAG_NONE,
+            &rtDesc,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            &clearValue,
+            IID_PPV_ARGS(&m_offscreenRT)));
+
+        D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+        rtvHeapDesc.NumDescriptors = 1;
+        rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        ThrowIfFailed(m_device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_offscreenRTVHeap)));
+        m_device->CreateRenderTargetView(m_offscreenRT.Get(), nullptr, m_offscreenRTVHeap->GetCPUDescriptorHandleForHeapStart());
+
+        D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+        srvHeapDesc.NumDescriptors = 1;
+        srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        ThrowIfFailed(m_device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_srvHeap)));
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = 1;
+        m_device->CreateShaderResourceView(m_offscreenRT.Get(), &srvDesc, m_srvHeap->GetCPUDescriptorHandleForHeapStart());
+    }
+
+    void CreateDownsamplePipeline(const std::wstring& shaderPath)
+    {
+        D3D12_DESCRIPTOR_RANGE srvRange = {};
+        srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRange.NumDescriptors = 1;
+        srvRange.BaseShaderRegister = 0;
+        srvRange.RegisterSpace = 0;
+        srvRange.OffsetInDescriptorsFromTableStart = 0;
+
+        D3D12_ROOT_PARAMETER rootParam = {};
+        rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParam.DescriptorTable.NumDescriptorRanges = 1;
+        rootParam.DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        D3D12_STATIC_SAMPLER_DESC sampler = {};
+        sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        sampler.ShaderRegister = 0;
+        sampler.RegisterSpace = 0;
+        sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+        rsDesc.NumParameters = 1;
+        rsDesc.pParameters = &rootParam;
+        rsDesc.NumStaticSamplers = 1;
+        rsDesc.pStaticSamplers = &sampler;
+        rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+        ComPtr<ID3DBlob> signature;
+        ComPtr<ID3DBlob> error;
+        ThrowIfFailed(D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, &error));
+        ThrowIfFailed(m_device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&m_downsampleRootSig)));
+
+        ComPtr<ID3DBlob> quadVS;
+        ComPtr<ID3DBlob> quadPS;
+        ComPtr<ID3DBlob> errorBlob;
+        ThrowIfFailed(D3DCompileFromFile(shaderPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "QuadVS", "vs_5_0", 0, 0, &quadVS, &errorBlob));
+        ThrowIfFailed(D3DCompileFromFile(shaderPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "QuadPS", "ps_5_0", 0, 0, &quadPS, &errorBlob));
+
+        D3D12_RASTERIZER_DESC rasterizerDesc = {};
+        rasterizerDesc.FillMode = D3D12_FILL_MODE_SOLID;
+        rasterizerDesc.CullMode = D3D12_CULL_MODE_NONE;
+        rasterizerDesc.DepthClipEnable = TRUE;
+
+        D3D12_BLEND_DESC blendDesc = {};
+        blendDesc.RenderTarget[0].BlendEnable = FALSE;
+        blendDesc.RenderTarget[0].LogicOpEnable = FALSE;
+        blendDesc.RenderTarget[0].SrcBlend = D3D12_BLEND_ONE;
+        blendDesc.RenderTarget[0].DestBlend = D3D12_BLEND_ZERO;
+        blendDesc.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+        blendDesc.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+        blendDesc.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_ZERO;
+        blendDesc.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        blendDesc.RenderTarget[0].LogicOp = D3D12_LOGIC_OP_NOOP;
+        blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+        D3D12_DEPTH_STENCIL_DESC depthStencilDesc = {};
+        depthStencilDesc.DepthEnable = FALSE;
+        depthStencilDesc.StencilEnable = FALSE;
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.InputLayout = { nullptr, 0 };
+        psoDesc.pRootSignature = m_downsampleRootSig.Get();
+        psoDesc.VS = { quadVS->GetBufferPointer(), quadVS->GetBufferSize() };
+        psoDesc.PS = { quadPS->GetBufferPointer(), quadPS->GetBufferSize() };
+        psoDesc.RasterizerState = rasterizerDesc;
+        psoDesc.BlendState = blendDesc;
+        psoDesc.DepthStencilState = depthStencilDesc;
+        psoDesc.SampleMask = UINT_MAX;
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.NumRenderTargets = 1;
+        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+        psoDesc.SampleDesc.Count = 1;
+
+        ThrowIfFailed(m_device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_downsamplePSO)));
+    }
+#endif
+
     void PopulateCommandList()
     {
         ThrowIfFailed(m_commandAllocators[m_frameIndex]->Reset());
         ThrowIfFailed(m_commandList->Reset(m_commandAllocators[m_frameIndex].Get(), m_pipelineState.Get()));
 
+        const float clearColor[] = { 0.1f, 0.15f, 0.25f, 1.0f };
+
+#ifdef ENABLE_SUPERSAMPLING
+        // Pass 1: render scene to offscreen RT at 1600x900
+        D3D12_CPU_DESCRIPTOR_HANDLE offscreenRTV = m_offscreenRTVHeap->GetCPUDescriptorHandleForHeapStart();
+        m_commandList->OMSetRenderTargets(1, &offscreenRTV, FALSE, nullptr);
+
+        D3D12_VIEWPORT ssViewport = {};
+        ssViewport.Width = static_cast<float>(SSWidth);
+        ssViewport.Height = static_cast<float>(SSHeight);
+        ssViewport.MinDepth = 0.0f;
+        ssViewport.MaxDepth = 1.0f;
+        m_commandList->RSSetViewports(1, &ssViewport);
+
+        D3D12_RECT ssScissor = { 0, 0, static_cast<LONG>(SSWidth), static_cast<LONG>(SSHeight) };
+        m_commandList->RSSetScissorRects(1, &ssScissor);
+
+        m_commandList->ClearRenderTargetView(offscreenRTV, clearColor, 0, nullptr);
+        m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
+        m_commandList->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
+        m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+        m_commandList->IASetIndexBuffer(&m_indexBufferView);
+        m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+
+        // Transition: offscreen RT→SRV, swapchain PRESENT→RTV
+        D3D12_RESOURCE_BARRIER midBarriers[2] = {
+            TransitionBarrier(m_offscreenRT.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+            TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET)
+        };
+        m_commandList->ResourceBarrier(2, midBarriers);
+
+        // Pass 2: downsample to swapchain at 800x450
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        rtvHandle.ptr += m_frameIndex * m_rtvDescriptorSize;
+        m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+        D3D12_VIEWPORT viewport = {};
+        viewport.Width = static_cast<float>(m_width);
+        viewport.Height = static_cast<float>(m_height);
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        m_commandList->RSSetViewports(1, &viewport);
+
+        D3D12_RECT scissorRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+        m_commandList->RSSetScissorRects(1, &scissorRect);
+
+        ID3D12DescriptorHeap* heaps[] = { m_srvHeap.Get() };
+        m_commandList->SetDescriptorHeaps(1, heaps);
+        m_commandList->SetGraphicsRootSignature(m_downsampleRootSig.Get());
+        m_commandList->SetGraphicsRootDescriptorTable(0, m_srvHeap->GetGPUDescriptorHandleForHeapStart());
+        m_commandList->SetPipelineState(m_downsamplePSO.Get());
+        m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_commandList->DrawInstanced(3, 1, 0, 0);
+
+        // Transition: swapchain RTV→PRESENT, offscreen SRV→RT (ready for next frame)
+        D3D12_RESOURCE_BARRIER endBarriers[2] = {
+            TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT),
+            TransitionBarrier(m_offscreenRT.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)
+        };
+        m_commandList->ResourceBarrier(2, endBarriers);
+
+#else
         D3D12_RESOURCE_BARRIER barrierToRender = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
         m_commandList->ResourceBarrier(1, &barrierToRender);
 
@@ -520,20 +726,17 @@ private:
         D3D12_RECT scissorRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
         m_commandList->RSSetScissorRects(1, &scissorRect);
 
-        const float clearColor[] = { 0.1f, 0.15f, 0.25f, 1.0f };
         m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-
         m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
         m_commandList->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
-
         m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
         m_commandList->IASetIndexBuffer(&m_indexBufferView);
-
         m_commandList->DrawIndexedInstanced(36, 1, 0, 0, 0);
 
         D3D12_RESOURCE_BARRIER barrierToPresent = TransitionBarrier(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
         m_commandList->ResourceBarrier(1, &barrierToPresent);
+#endif
 
         ThrowIfFailed(m_commandList->Close());
     }
@@ -566,8 +769,8 @@ private:
 
 private:
     HWND m_hwnd = nullptr;
-    UINT m_width = 1280;
-    UINT m_height = 720;
+    UINT m_width = 800;
+    UINT m_height = 450;
 
     ComPtr<ID3D12Device> m_device;
     ComPtr<ID3D12CommandQueue> m_commandQueue;
@@ -605,6 +808,16 @@ private:
     bool m_moveBackward = false;
     bool m_moveLeft = false;
     bool m_moveRight = false;
+
+#ifdef ENABLE_SUPERSAMPLING
+    static constexpr UINT SSWidth  = 1600;
+    static constexpr UINT SSHeight = 900;
+    ComPtr<ID3D12Resource>       m_offscreenRT;
+    ComPtr<ID3D12DescriptorHeap> m_offscreenRTVHeap;
+    ComPtr<ID3D12DescriptorHeap> m_srvHeap;
+    ComPtr<ID3D12RootSignature>  m_downsampleRootSig;
+    ComPtr<ID3D12PipelineState>  m_downsamplePSO;
+#endif
 };
 
 static D3D12App* g_app = nullptr;
@@ -656,8 +869,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         return -1;
     }
 
-    const UINT width = 1280;
-    const UINT height = 720;
+    const UINT width = 800;
+    const UINT height = 450;
     RECT windowRect = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 

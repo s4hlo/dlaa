@@ -5,9 +5,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+option(ENABLE_SUPERSAMPLING "Enable 2x supersampling (renders at 1600x900, downsamples to 800x450)" OFF)
+
 add_executable(DirectX12Cube WIN32 src/main.cpp)
 
 target_compile_definitions(DirectX12Cube PRIVATE WIN32_LEAN_AND_MEAN UNICODE)
+if(ENABLE_SUPERSAMPLING)
+    target_compile_definitions(DirectX12Cube PRIVATE ENABLE_SUPERSAMPLING)
+endif()
+
 target_include_directories(DirectX12Cube PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(DirectX12Cube PRIVATE d3d12 dxgi d3dcompiler)
 
