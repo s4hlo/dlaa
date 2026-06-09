@@ -10,6 +10,8 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
+#include <cmath>
+#include <algorithm>
 
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
@@ -63,17 +65,56 @@ public:
         return true;
     }
 
+    void EnableMouseCapture()
+    {
+        m_mouseCapture = true;
+        ShowCursor(FALSE);
+        RECT rect;
+        GetClientRect(m_hwnd, &rect);
+        POINT center = { (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2 };
+        ClientToScreen(m_hwnd, &center);
+        SetCursorPos(center.x, center.y);
+    }
+
+    void DisableMouseCapture()
+    {
+        m_mouseCapture = false;
+        ShowCursor(TRUE);
+    }
+
     void Update()
     {
         const auto now = std::chrono::steady_clock::now();
         const float deltaTime = std::chrono::duration<float>(now - m_lastTime).count();
         m_lastTime = now;
 
+        if (m_mouseCapture)
+        {
+            RECT rect;
+            GetClientRect(m_hwnd, &rect);
+            POINT center = { (rect.right - rect.left) / 2, (rect.bottom - rect.top) / 2 };
+            ClientToScreen(m_hwnd, &center);
+
+            POINT pt;
+            GetCursorPos(&pt);
+            m_yaw   += static_cast<float>(pt.x - center.x) * m_mouseSensitivity;
+            m_pitch -= static_cast<float>(pt.y - center.y) * m_mouseSensitivity;
+            m_pitch  = std::clamp(m_pitch, -XM_PIDIV2 + 0.01f, XM_PIDIV2 - 0.01f);
+            SetCursorPos(center.x, center.y);
+        }
+
+        const float cp = cosf(m_pitch), sp = sinf(m_pitch);
+        const float cy = cosf(m_yaw),   sy = sinf(m_yaw);
+        const XMVECTOR forward = XMVectorSet(cp * sy, sp, cp * cy, 0.0f);
+        const XMVECTOR flatFwd = XMVector3Normalize(XMVectorSet(sy, 0.0f, cy, 0.0f));
+        const XMVECTOR up      = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        const XMVECTOR right   = XMVector3Cross(up, flatFwd);
+
         XMVECTOR move = XMVectorZero();
-        if (m_moveForward) move += XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-        if (m_moveBackward) move += XMVectorSet(0.0f, 0.0f, -1.0f, 0.0f);
-        if (m_moveRight) move += XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
-        if (m_moveLeft) move += XMVectorSet(-1.0f, 0.0f, 0.0f, 0.0f);
+        if (m_moveForward)  move = XMVectorAdd(move, flatFwd);
+        if (m_moveBackward) move = XMVectorSubtract(move, flatFwd);
+        if (m_moveRight)    move = XMVectorAdd(move, right);
+        if (m_moveLeft)     move = XMVectorSubtract(move, right);
 
         if (XMVector3LengthSq(move).m128_f32[0] > 0.0f)
         {
@@ -81,12 +122,11 @@ public:
             m_cameraPosition = XMVectorAdd(m_cameraPosition, move);
         }
 
-        const XMVECTOR target = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
-        const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-        const XMMATRIX view = XMMatrixLookAtLH(m_cameraPosition, target, up);
-        const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, static_cast<float>(m_width) / static_cast<float>(m_height), 0.1f, 100.0f);
-        const XMMATRIX world = XMMatrixIdentity();
-        const XMMATRIX mvp = XMMatrixTranspose(world * view * proj);
+        const XMVECTOR target = XMVectorAdd(m_cameraPosition, forward);
+        const XMMATRIX view   = XMMatrixLookAtLH(m_cameraPosition, target, up);
+        const XMMATRIX proj   = XMMatrixPerspectiveFovLH(XM_PIDIV4, static_cast<float>(m_width) / static_cast<float>(m_height), 0.1f, 100.0f);
+        const XMMATRIX world  = XMMatrixIdentity();
+        const XMMATRIX mvp    = XMMatrixTranspose(world * view * proj);
 
         ConstantBufferData cbData;
         XMStoreFloat4x4(&cbData.mvp, mvp);
@@ -468,13 +508,23 @@ private:
         rtvHandle.ptr += m_frameIndex * m_rtvDescriptorSize;
         m_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
+        D3D12_VIEWPORT viewport = {};
+        viewport.TopLeftX = 0.0f;
+        viewport.TopLeftY = 0.0f;
+        viewport.Width = static_cast<float>(m_width);
+        viewport.Height = static_cast<float>(m_height);
+        viewport.MinDepth = 0.0f;
+        viewport.MaxDepth = 1.0f;
+        m_commandList->RSSetViewports(1, &viewport);
+
+        D3D12_RECT scissorRect = { 0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height) };
+        m_commandList->RSSetScissorRects(1, &scissorRect);
+
         const float clearColor[] = { 0.1f, 0.15f, 0.25f, 1.0f };
         m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
         m_commandList->SetGraphicsRootSignature(m_rootSignature.Get());
-        ID3D12DescriptorHeap* ppHeaps[] = { m_cbvHeap.Get() };
-        m_commandList->SetDescriptorHeaps(_countof(ppHeaps), ppHeaps);
-        m_commandList->SetGraphicsRootDescriptorTable(0, m_cbvHeap->GetGPUDescriptorHandleForHeapStart());
+        m_commandList->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
 
         m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
@@ -547,6 +597,10 @@ private:
 
     XMVECTOR m_cameraPosition = XMVectorSet(0.0f, 0.0f, -6.0f, 0.0f);
     float m_cameraSpeed = 3.0f;
+    float m_yaw = 0.0f;
+    float m_pitch = 0.0f;
+    float m_mouseSensitivity = 0.002f;
+    bool m_mouseCapture = false;
     bool m_moveForward = false;
     bool m_moveBackward = false;
     bool m_moveLeft = false;
@@ -559,14 +613,21 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 {
     switch (message)
     {
+    case WM_LBUTTONDOWN:
+        if (g_app) g_app->EnableMouseCapture();
+        return 0;
+
     case WM_KEYDOWN:
-        if (g_app)
-            g_app->OnKeyDown(wParam);
+        if (wParam == VK_ESCAPE && g_app) g_app->DisableMouseCapture();
+        if (g_app) g_app->OnKeyDown(wParam);
         return 0;
 
     case WM_KEYUP:
-        if (g_app)
-            g_app->OnKeyUp(wParam);
+        if (g_app) g_app->OnKeyUp(wParam);
+        return 0;
+
+    case WM_KILLFOCUS:
+        if (g_app) g_app->DisableMouseCapture();
         return 0;
 
     case WM_DESTROY:
@@ -644,8 +705,16 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
         }
         else
         {
-            app.Update();
-            app.Render();
+            try
+            {
+                app.Update();
+                app.Render();
+            }
+            catch (const std::exception& ex)
+            {
+                MessageBoxA(hwnd, ex.what(), "Runtime Error", MB_OK | MB_ICONERROR);
+                return -1;
+            }
         }
     }
 
