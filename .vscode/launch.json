@@ -1,0 +1,32 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/debug/DirectX12Cube.exe",
+            "cwd": "${workspaceFolder}/build/debug",
+            "preLaunchTask": "Build: Debug",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Debug SSAA",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/debug-ssaa/DirectX12Cube.exe",
+            "cwd": "${workspaceFolder}/build/debug-ssaa",
+            "preLaunchTask": "Build: Debug SSAA",
+            "stopAtEntry": false
+        },
+        {
+            "name": "Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/release/DirectX12Cube.exe",
+            "cwd": "${workspaceFolder}/build/release",
+            "preLaunchTask": "Build: Release",
+            "stopAtEntry": false
+        }
+    ]
+}
