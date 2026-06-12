@@ -16,6 +16,8 @@ public:
     void ExecuteToTarget(ID3D12GraphicsCommandList* cmd,
                          D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle, UINT w, UINT h);
 
+    void SetDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE dsv) { m_dsvHandle = dsv; }
+
 private:
     void DrawScene(ID3D12GraphicsCommandList* cmd,
                    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle, UINT w, UINT h);
@@ -28,4 +30,5 @@ private:
     D3D12_INDEX_BUFFER_VIEW     m_ibv = {};
     ComPtr<ID3D12Resource>      m_constantBuffer;
     UINT8*                      m_cbDataBegin = nullptr;
+    D3D12_CPU_DESCRIPTOR_HANDLE m_dsvHandle   = {};
 };

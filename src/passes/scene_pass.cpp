@@ -53,8 +53,10 @@ void ScenePass::Initialize(D3DContext& ctx, const std::wstring& shaderPath)
     blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
     D3D12_DEPTH_STENCIL_DESC dsDesc = {};
-    dsDesc.DepthEnable   = FALSE;
-    dsDesc.StencilEnable = FALSE;
+    dsDesc.DepthEnable    = TRUE;
+    dsDesc.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    dsDesc.DepthFunc      = D3D12_COMPARISON_FUNC_LESS;
+    dsDesc.StencilEnable  = FALSE;
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
     psoDesc.InputLayout           = { inputDescs, _countof(inputDescs) };
@@ -68,6 +70,7 @@ void ScenePass::Initialize(D3DContext& ctx, const std::wstring& shaderPath)
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     psoDesc.NumRenderTargets      = 1;
     psoDesc.RTVFormats[0]         = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoDesc.DSVFormat             = DXGI_FORMAT_D32_FLOAT;
     psoDesc.SampleDesc.Count      = 1;
     ThrowIfFailed(ctx.device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pso)));
 
@@ -173,8 +176,9 @@ void ScenePass::DrawScene(ID3D12GraphicsCommandList* cmd,
     D3D12_RECT scissor = { 0, 0, static_cast<LONG>(w), static_cast<LONG>(h) };
     cmd->RSSetScissorRects(1, &scissor);
 
-    cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+    cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, &m_dsvHandle);
     cmd->ClearRenderTargetView(rtvHandle, kClearColor, 0, nullptr);
+    cmd->ClearDepthStencilView(m_dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     cmd->SetPipelineState(m_pso.Get());
     cmd->SetGraphicsRootSignature(m_rootSig.Get());
     cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());

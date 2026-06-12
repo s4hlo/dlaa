@@ -1,6 +1,7 @@
 #pragma once
 #include "d3d_context.h"
 #include "camera.h"
+#include "frame_buffers.h"
 #include "passes/scene_pass.h"
 #include "passes/downsample_pass.h"
 #include <memory>
@@ -24,7 +25,8 @@ private:
 
     HWND        m_hwnd = nullptr;
     D3DContext  m_ctx;
-    Camera      m_camera;
-    ScenePass   m_scenePass;
+    Camera       m_camera;
+    FrameBuffers m_frameBuffers;
+    ScenePass    m_scenePass;
     std::unique_ptr<DownsamplePass> m_downsamplePass;
 };

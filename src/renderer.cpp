@@ -11,7 +11,11 @@ void Renderer::Initialize(HWND hwnd, UINT width, UINT height)
 #ifdef ENABLE_SUPERSAMPLING
     m_downsamplePass = std::make_unique<DownsamplePass>();
     m_downsamplePass->Initialize(m_ctx, shaderPath);
+    m_frameBuffers.Initialize(m_ctx, DownsamplePass::SSWidth, DownsamplePass::SSHeight);
+#else
+    m_frameBuffers.Initialize(m_ctx, width, height);
 #endif
+    m_scenePass.SetDepthStencilView(m_frameBuffers.GetDSV());
 }
 
 void Renderer::Update()

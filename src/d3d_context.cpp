@@ -52,6 +52,7 @@ void D3DContext::Initialize(HWND hwnd, UINT w, UINT h)
     scDesc.Width            = width;
     scDesc.Height           = height;
     scDesc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    
     scDesc.BufferUsage      = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     scDesc.SwapEffect       = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     scDesc.SampleDesc.Count = 1;

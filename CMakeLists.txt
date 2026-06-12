@@ -11,6 +11,7 @@ add_executable(DirectX12Cube WIN32
     src/main.cpp
     src/camera.cpp
     src/d3d_context.cpp
+    src/frame_buffers.cpp
     src/passes/scene_pass.cpp
     src/passes/downsample_pass.cpp
     src/renderer.cpp
