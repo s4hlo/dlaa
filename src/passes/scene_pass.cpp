@@ -164,7 +164,8 @@ void ScenePass::UpdateConstants(const Camera& camera, UINT width, UINT height)
 }
 
 void ScenePass::DrawScene(ID3D12GraphicsCommandList* cmd,
-                          D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle, UINT w, UINT h)
+                          D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle,
+                          D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h)
 {
     D3D12_VIEWPORT vp = {};
     vp.Width    = static_cast<float>(w);
@@ -176,9 +177,9 @@ void ScenePass::DrawScene(ID3D12GraphicsCommandList* cmd,
     D3D12_RECT scissor = { 0, 0, static_cast<LONG>(w), static_cast<LONG>(h) };
     cmd->RSSetScissorRects(1, &scissor);
 
-    cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, &m_dsvHandle);
+    cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
     cmd->ClearRenderTargetView(rtvHandle, kClearColor, 0, nullptr);
-    cmd->ClearDepthStencilView(m_dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     cmd->SetPipelineState(m_pso.Get());
     cmd->SetGraphicsRootSignature(m_rootSig.Get());
     cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
@@ -198,7 +199,7 @@ void ScenePass::Execute(D3DContext& ctx, ID3D12GraphicsCommandList* cmd)
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
     cmd->ResourceBarrier(1, &toRender);
 
-    DrawScene(cmd, rtvHandle, ctx.width, ctx.height);
+    DrawScene(cmd, rtvHandle, m_dsvHandle, ctx.width, ctx.height);
 
     auto toPresent = TransitionBarrier(ctx.renderTargets[ctx.frameIndex].Get(),
         D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -208,5 +209,12 @@ void ScenePass::Execute(D3DContext& ctx, ID3D12GraphicsCommandList* cmd)
 void ScenePass::ExecuteToTarget(ID3D12GraphicsCommandList* cmd,
                                 D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle, UINT w, UINT h)
 {
-    DrawScene(cmd, rtvHandle, w, h);
+    DrawScene(cmd, rtvHandle, m_dsvHandle, w, h);
+}
+
+void ScenePass::DrawTo(ID3D12GraphicsCommandList* cmd,
+                       D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle,
+                       D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h)
+{
+    DrawScene(cmd, rtvHandle, dsvHandle, w, h);
 }

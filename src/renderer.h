@@ -2,6 +2,7 @@
 #include "d3d_context.h"
 #include "camera.h"
 #include "frame_buffers.h"
+#include "frame_capture.h"
 #include "passes/scene_pass.h"
 #include "passes/downsample_pass.h"
 #include <memory>
@@ -15,7 +16,12 @@ public:
     void Update();
     void Render();
 
-    void OnKeyDown(WPARAM key) { if (key == VK_ESCAPE) m_camera.DisableCapture(); m_camera.OnKeyDown(key); }
+    void OnKeyDown(WPARAM key)
+    {
+        if (key == VK_ESCAPE) m_camera.DisableCapture();
+        if (key == 'C')       m_frameCapture.RequestCapture();
+        m_camera.OnKeyDown(key);
+    }
     void OnKeyUp(WPARAM key)   { m_camera.OnKeyUp(key); }
     void OnLButtonDown()       { m_camera.EnableCapture(m_hwnd); }
     void OnKillFocus()         { m_camera.DisableCapture(); }
@@ -28,5 +34,6 @@ private:
     Camera       m_camera;
     FrameBuffers m_frameBuffers;
     ScenePass    m_scenePass;
-    std::unique_ptr<DownsamplePass> m_downsamplePass;
+    DownsamplePass m_downsamplePass;
+    FrameCapture   m_frameCapture;
 };

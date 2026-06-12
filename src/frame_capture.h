@@ -1,0 +1,49 @@
+#pragma once
+#include "d3d_helpers.h"
+
+struct D3DContext;
+class ScenePass;
+
+// Owns all frame-capture state: a native-resolution (800x450) color RT and
+// depth buffer for the aliased pass, three READBACK buffers, and the file
+// writers. Capture is requested with C; one frame is written per press.
+class FrameCapture
+{
+public:
+    static constexpr UINT Width  = 800;
+    static constexpr UINT Height = 450;
+
+    void Initialize(D3DContext& ctx);
+
+    void RequestCapture()  { m_pending = true; }
+    bool IsPending() const { return m_pending; }
+
+    // Records (into the live command list) the swapchain copy + the native
+    // aliased render + the two readback copies. Call after DownsamplePass and
+    // before cmd->Close(), only when IsPending() is true.
+    void RecordCapture(D3DContext& ctx, ID3D12GraphicsCommandList* cmd,
+                       ScenePass& scenePass);
+
+    // After the GPU wait: maps the readback buffers, writes the 3 files,
+    // increments the frame counter, clears the pending flag.
+    void WriteToDisk();
+
+private:
+    D3D12_CPU_DESCRIPTOR_HANDLE AliasedRTV() const;
+    D3D12_CPU_DESCRIPTOR_HANDLE CaptureDSV() const;
+
+    ComPtr<ID3D12Resource>       m_aliasedRT;
+    ComPtr<ID3D12DescriptorHeap> m_aliasedRTVHeap;
+    ComPtr<ID3D12Resource>       m_captureDepth;
+    ComPtr<ID3D12DescriptorHeap> m_captureDSVHeap;
+
+    ComPtr<ID3D12Resource> m_readbackSSAA;     // swapchain AA copy (RGBA8)
+    ComPtr<ID3D12Resource> m_readbackAliased;  // native aliased    (RGBA8)
+    ComPtr<ID3D12Resource> m_readbackDepth;    // native depth      (float32)
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_colorLayout = {};  // RGBA8 footprint
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_depthLayout = {};  // R32_FLOAT footprint
+
+    bool m_pending    = false;
+    UINT m_frameIndex = 0;
+};

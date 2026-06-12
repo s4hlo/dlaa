@@ -27,22 +27,6 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
-    },
-    {
-      "name": "debug-ssaa",
-      "displayName": "Debug (SSAA)",
-      "inherits": "debug",
-      "cacheVariables": {
-        "ENABLE_SUPERSAMPLING": "ON"
-      }
-    },
-    {
-      "name": "release-ssaa",
-      "displayName": "Release (SSAA)",
-      "inherits": "release",
-      "cacheVariables": {
-        "ENABLE_SUPERSAMPLING": "ON"
-      }
     }
   ],
   "buildPresets": [
@@ -53,14 +37,6 @@
     {
       "name": "release",
       "configurePreset": "release"
-    },
-    {
-      "name": "debug-ssaa",
-      "configurePreset": "debug-ssaa"
-    },
-    {
-      "name": "release-ssaa",
-      "configurePreset": "release-ssaa"
     }
   ]
 }

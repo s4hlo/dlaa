@@ -8,22 +8,17 @@ void Renderer::Initialize(HWND hwnd, UINT width, UINT height)
     const std::wstring shaderPath = GetShaderPath();
     m_scenePass.Initialize(m_ctx, shaderPath);
 
-#ifdef ENABLE_SUPERSAMPLING
-    m_downsamplePass = std::make_unique<DownsamplePass>();
-    m_downsamplePass->Initialize(m_ctx, shaderPath);
+    m_downsamplePass.Initialize(m_ctx, shaderPath);
     m_frameBuffers.Initialize(m_ctx, DownsamplePass::SSWidth, DownsamplePass::SSHeight);
-#else
-    m_frameBuffers.Initialize(m_ctx, width, height);
-#endif
     m_scenePass.SetDepthStencilView(m_frameBuffers.GetDSV());
+    m_frameCapture.Initialize(m_ctx);
 }
 
 void Renderer::Update()
 {
     m_camera.Update(m_hwnd);
-    const UINT renderW = m_downsamplePass ? DownsamplePass::SSWidth  : m_ctx.width;
-    const UINT renderH = m_downsamplePass ? DownsamplePass::SSHeight : m_ctx.height;
-    m_scenePass.UpdateConstants(m_camera, renderW, renderH);
+    m_scenePass.UpdateConstants(m_camera,
+        DownsamplePass::SSWidth, DownsamplePass::SSHeight);
 }
 
 void Renderer::Render()
@@ -34,17 +29,14 @@ void Renderer::Render()
 
     ID3D12GraphicsCommandList* cmd = m_ctx.commandList.Get();
 
-    if (m_downsamplePass)
-    {
-        m_scenePass.ExecuteToTarget(cmd,
-            m_downsamplePass->GetOffscreenRTV(),
-            DownsamplePass::SSWidth, DownsamplePass::SSHeight);
-        m_downsamplePass->Execute(m_ctx, cmd);
-    }
-    else
-    {
-        m_scenePass.Execute(m_ctx, cmd);
-    }
+    m_scenePass.ExecuteToTarget(cmd,
+        m_downsamplePass.GetOffscreenRTV(),
+        DownsamplePass::SSWidth, DownsamplePass::SSHeight);
+    m_downsamplePass.Execute(m_ctx, cmd);
+
+    const bool doCapture = m_frameCapture.IsPending();
+    if (doCapture)
+        m_frameCapture.RecordCapture(m_ctx, cmd, m_scenePass);
 
     ThrowIfFailed(cmd->Close());
 
@@ -52,6 +44,9 @@ void Renderer::Render()
     m_ctx.commandQueue->ExecuteCommandLists(1, lists);
     ThrowIfFailed(m_ctx.swapChain->Present(1, 0));
     m_ctx.WaitForPreviousFrame();
+
+    if (doCapture)
+        m_frameCapture.WriteToDisk();
 }
 
 std::wstring Renderer::GetShaderPath() const
