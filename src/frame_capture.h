@@ -1,5 +1,6 @@
 #pragma once
 #include "d3d_helpers.h"
+#include <vector>
 
 struct D3DContext;
 class ScenePass;
@@ -15,8 +16,8 @@ public:
 
     void Initialize(D3DContext& ctx);
 
-    void RequestCapture()  { m_pending = true; }
-    bool IsPending() const { return m_pending; }
+    void RequestCapture()  { if (m_phase == Phase::Idle) m_phase = Phase::StorePrev; }
+    bool IsPending() const { return m_phase != Phase::Idle; }
 
     // Records (into the live command list) the swapchain copy + the native
     // aliased render + the two readback copies. Call after DownsamplePass and
@@ -44,6 +45,9 @@ private:
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_colorLayout = {};  // RGBA8 footprint
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_depthLayout = {};  // R32_FLOAT footprint
 
-    bool m_pending    = false;
-    UINT m_frameIndex = 0;
+    std::vector<unsigned char> m_prevSSAA;
+
+    enum class Phase : uint8_t { Idle, StorePrev, CaptureAll };
+    Phase m_phase     = Phase::Idle;
+    UINT  m_frameIndex = 0;
 };

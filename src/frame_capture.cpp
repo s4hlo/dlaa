@@ -155,7 +155,7 @@ void FrameCapture::RecordCapture(D3DContext& ctx, ID3D12GraphicsCommandList* cmd
 {
     ID3D12Resource* swap = ctx.renderTargets[ctx.frameIndex].Get();
 
-    // 1. Swapchain (finished AA image) -> readbackSSAA.
+    // Always copy swapchain SSAA (used as prev_ssaa in phase 1, as ssaa in phase 2).
     auto toCopy = TransitionBarrier(swap,
         D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
     cmd->ResourceBarrier(1, &toCopy);
@@ -164,26 +164,27 @@ void FrameCapture::RecordCapture(D3DContext& ctx, ID3D12GraphicsCommandList* cmd
         D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
     cmd->ResourceBarrier(1, &toPresent);
 
-    // 2. Native 1-spp render of the cube -> aliased RT + capture depth.
-    scenePass.DrawTo(cmd, AliasedRTV(), CaptureDSV(), Width, Height);
+    if (m_phase == Phase::CaptureAll)
+    {
+        // Native 1-spp render -> aliased RT + capture depth.
+        scenePass.DrawTo(cmd, AliasedRTV(), CaptureDSV(), Width, Height);
 
-    // 3. Aliased RT -> readbackAliased.
-    auto aliasedToCopy = TransitionBarrier(m_aliasedRT.Get(),
-        D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cmd->ResourceBarrier(1, &aliasedToCopy);
-    CopyToReadback(cmd, m_aliasedRT.Get(), m_readbackAliased.Get(), m_colorLayout);
-    auto aliasedToRT = TransitionBarrier(m_aliasedRT.Get(),
-        D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    cmd->ResourceBarrier(1, &aliasedToRT);
+        auto aliasedToCopy = TransitionBarrier(m_aliasedRT.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->ResourceBarrier(1, &aliasedToCopy);
+        CopyToReadback(cmd, m_aliasedRT.Get(), m_readbackAliased.Get(), m_colorLayout);
+        auto aliasedToRT = TransitionBarrier(m_aliasedRT.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        cmd->ResourceBarrier(1, &aliasedToRT);
 
-    // 4. Capture depth -> readbackDepth.
-    auto depthToCopy = TransitionBarrier(m_captureDepth.Get(),
-        D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    cmd->ResourceBarrier(1, &depthToCopy);
-    CopyToReadback(cmd, m_captureDepth.Get(), m_readbackDepth.Get(), m_depthLayout);
-    auto depthToWrite = TransitionBarrier(m_captureDepth.Get(),
-        D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-    cmd->ResourceBarrier(1, &depthToWrite);
+        auto depthToCopy = TransitionBarrier(m_captureDepth.Get(),
+            D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->ResourceBarrier(1, &depthToCopy);
+        CopyToReadback(cmd, m_captureDepth.Get(), m_readbackDepth.Get(), m_depthLayout);
+        auto depthToWrite = TransitionBarrier(m_captureDepth.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        cmd->ResourceBarrier(1, &depthToWrite);
+    }
 }
 
 namespace
@@ -265,12 +266,22 @@ namespace
 
 void FrameCapture::WriteToDisk()
 {
+    if (m_phase == Phase::StorePrev)
+    {
+        m_prevSSAA = Unpad<unsigned char>(m_readbackSSAA.Get(),
+            m_colorLayout.Footprint.RowPitch, Width, Height, 4);
+        m_phase = Phase::CaptureAll;
+        return;
+    }
+
     namespace fs = std::filesystem;
     fs::path dir = "captures";
     fs::create_directories(dir);
 
     char stem[32];
     snprintf(stem, sizeof(stem), "frame_%04u", m_frameIndex);
+
+    WriteBmp(dir / (std::string(stem) + "_prev_ssaa.bmp"), m_prevSSAA, Width, Height);
 
     auto ssaa = Unpad<unsigned char>(m_readbackSSAA.Get(),
         m_colorLayout.Footprint.RowPitch, Width, Height, 4);
@@ -285,5 +296,6 @@ void FrameCapture::WriteToDisk()
     WriteNpyFloat(dir / (std::string(stem) + "_depth.npy"), depth.data(), Width, Height);
 
     ++m_frameIndex;
-    m_pending = false;
+    m_prevSSAA.clear();
+    m_phase = Phase::Idle;
 }
