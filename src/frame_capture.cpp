@@ -56,6 +56,32 @@ void FrameCapture::Initialize(D3DContext& ctx)
     ctx.device->CreateRenderTargetView(m_aliasedRT.Get(), nullptr,
         m_aliasedRTVHeap->GetCPUDescriptorHandleForHeapStart());
 
+    // --- Motion vector RT (800x450, R16G16_FLOAT) ---
+    D3D12_RESOURCE_DESC motionDesc = {};
+    motionDesc.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    motionDesc.Width            = Width;
+    motionDesc.Height           = Height;
+    motionDesc.DepthOrArraySize = 1;
+    motionDesc.MipLevels        = 1;
+    motionDesc.Format           = DXGI_FORMAT_R16G16_FLOAT;
+    motionDesc.SampleDesc.Count = 1;
+    motionDesc.Layout           = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    motionDesc.Flags            = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12_CLEAR_VALUE motionClear = {};
+    motionClear.Format = DXGI_FORMAT_R16G16_FLOAT;
+
+    ThrowIfFailed(ctx.device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE,
+        &motionDesc, D3D12_RESOURCE_STATE_RENDER_TARGET, &motionClear,
+        IID_PPV_ARGS(&m_motionRT)));
+
+    D3D12_DESCRIPTOR_HEAP_DESC motionRTVHeapDesc = {};
+    motionRTVHeapDesc.NumDescriptors = 1;
+    motionRTVHeapDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    ThrowIfFailed(ctx.device->CreateDescriptorHeap(&motionRTVHeapDesc, IID_PPV_ARGS(&m_motionRTVHeap)));
+    ctx.device->CreateRenderTargetView(m_motionRT.Get(), nullptr,
+        m_motionRTVHeap->GetCPUDescriptorHandleForHeapStart());
+
     // --- Native depth (800x450, R32_TYPELESS viewed as D32_FLOAT) ---
     D3D12_RESOURCE_DESC depthDesc = {};
     depthDesc.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -114,14 +140,24 @@ void FrameCapture::Initialize(D3DContext& ctx)
         ThrowIfFailed(ctx.device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE,
             &b, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&out)));
     };
-    MakeReadback(colorTotal, m_readbackSSAA);
-    MakeReadback(colorTotal, m_readbackAliased);
-    MakeReadback(depthTotal, m_readbackDepth);
+    UINT64 motionTotal = 0;
+    ctx.device->GetCopyableFootprints(&motionDesc, 0, 1, 0,
+        &m_motionLayout, nullptr, nullptr, &motionTotal);
+
+    MakeReadback(colorTotal,  m_readbackSSAA);
+    MakeReadback(colorTotal,  m_readbackAliased);
+    MakeReadback(depthTotal,  m_readbackDepth);
+    MakeReadback(motionTotal, m_readbackMotion);
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE FrameCapture::AliasedRTV() const
 {
     return m_aliasedRTVHeap->GetCPUDescriptorHandleForHeapStart();
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE FrameCapture::MotionRTV() const
+{
+    return m_motionRTVHeap->GetCPUDescriptorHandleForHeapStart();
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE FrameCapture::CaptureDSV() const
@@ -166,8 +202,8 @@ void FrameCapture::RecordCapture(D3DContext& ctx, ID3D12GraphicsCommandList* cmd
 
     if (m_phase == Phase::CaptureAll)
     {
-        // Native 1-spp render -> aliased RT + capture depth.
-        scenePass.DrawTo(cmd, AliasedRTV(), CaptureDSV(), Width, Height);
+        // Native 1-spp render -> aliased RT + motion RT + capture depth (MRT).
+        scenePass.DrawToMRT(cmd, AliasedRTV(), MotionRTV(), CaptureDSV(), Width, Height);
 
         auto aliasedToCopy = TransitionBarrier(m_aliasedRT.Get(),
             D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -184,6 +220,14 @@ void FrameCapture::RecordCapture(D3DContext& ctx, ID3D12GraphicsCommandList* cmd
         auto depthToWrite = TransitionBarrier(m_captureDepth.Get(),
             D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
         cmd->ResourceBarrier(1, &depthToWrite);
+
+        auto motionToCopy = TransitionBarrier(m_motionRT.Get(),
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        cmd->ResourceBarrier(1, &motionToCopy);
+        CopyToReadback(cmd, m_motionRT.Get(), m_readbackMotion.Get(), m_motionLayout);
+        auto motionToRT = TransitionBarrier(m_motionRT.Get(),
+            D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        cmd->ResourceBarrier(1, &motionToRT);
     }
 }
 
@@ -231,6 +275,29 @@ namespace
         const D3D12_RANGE noWrite = { 0, 0 };
         readback->Unmap(0, &noWrite);
         return out;
+    }
+
+    // shape (H, W, 2), dtype float16 little-endian ('<f2')
+    void WriteNpyHalf2(const std::filesystem::path& path,
+                       const uint16_t* data, UINT w, UINT h)
+    {
+        std::string dict = "{'descr': '<f2', 'fortran_order': False, 'shape': ("
+                         + std::to_string(h) + ", " + std::to_string(w) + ", 2), }";
+        size_t unpadded = 10 + dict.size() + 1;
+        size_t padded   = ((unpadded + 63) / 64) * 64;
+        dict.append(padded - unpadded, ' ');
+        dict.push_back('\n');
+
+        std::ofstream f(path, std::ios::binary);
+        if (!f) throw std::runtime_error("cannot open " + path.string());
+        const unsigned char magic[8] = { 0x93, 'N','U','M','P','Y', 1, 0 };
+        f.write(reinterpret_cast<const char*>(magic), 8);
+        const uint16_t headerLen = static_cast<uint16_t>(dict.size());
+        f.write(reinterpret_cast<const char*>(&headerLen), 2);
+        f.write(dict.data(), static_cast<std::streamsize>(dict.size()));
+        f.write(reinterpret_cast<const char*>(data),
+                static_cast<std::streamsize>(sizeof(uint16_t) * 2 * w * h));
+        if (!f) throw std::runtime_error("write failed: " + path.string());
     }
 
     void WriteBmp(const std::filesystem::path& path,
@@ -294,6 +361,10 @@ void FrameCapture::WriteToDisk()
     auto depth = Unpad<float>(m_readbackDepth.Get(),
         m_depthLayout.Footprint.RowPitch, Width, Height, 4);
     WriteNpyFloat(dir / (std::string(stem) + "_depth.npy"), depth.data(), Width, Height);
+
+    auto motion = Unpad<uint16_t>(m_readbackMotion.Get(),
+        m_motionLayout.Footprint.RowPitch, Width, Height, 4);
+    WriteNpyHalf2(dir / (std::string(stem) + "_motion.npy"), motion.data(), Width, Height);
 
     ++m_frameIndex;
     m_prevSSAA.clear();

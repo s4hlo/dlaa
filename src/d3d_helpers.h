@@ -24,6 +24,7 @@ struct Vertex
 struct alignas(256) ConstantBufferData
 {
     DirectX::XMFLOAT4X4 mvp;
+    DirectX::XMFLOAT4X4 mvpPrev;
 };
 #pragma warning(pop)
 

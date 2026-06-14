@@ -31,19 +31,24 @@ public:
 
 private:
     D3D12_CPU_DESCRIPTOR_HANDLE AliasedRTV() const;
+    D3D12_CPU_DESCRIPTOR_HANDLE MotionRTV()  const;
     D3D12_CPU_DESCRIPTOR_HANDLE CaptureDSV() const;
 
     ComPtr<ID3D12Resource>       m_aliasedRT;
     ComPtr<ID3D12DescriptorHeap> m_aliasedRTVHeap;
+    ComPtr<ID3D12Resource>       m_motionRT;
+    ComPtr<ID3D12DescriptorHeap> m_motionRTVHeap;
     ComPtr<ID3D12Resource>       m_captureDepth;
     ComPtr<ID3D12DescriptorHeap> m_captureDSVHeap;
 
     ComPtr<ID3D12Resource> m_readbackSSAA;     // swapchain AA copy (RGBA8)
     ComPtr<ID3D12Resource> m_readbackAliased;  // native aliased    (RGBA8)
     ComPtr<ID3D12Resource> m_readbackDepth;    // native depth      (float32)
+    ComPtr<ID3D12Resource> m_readbackMotion;   // motion vectors    (RG16F)
 
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_colorLayout = {};  // RGBA8 footprint
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_depthLayout = {};  // R32_FLOAT footprint
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_colorLayout  = {};  // RGBA8 footprint
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_depthLayout  = {};  // R32_FLOAT footprint
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_motionLayout = {};  // RG16F footprint
 
     std::vector<unsigned char> m_prevSSAA;
 

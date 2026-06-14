@@ -21,6 +21,12 @@ public:
                 D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle,
                 D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h);
 
+    // MRT variant: RT0 = color, RT1 = motion vectors (R16G16F, NDC curr-prev).
+    void DrawToMRT(ID3D12GraphicsCommandList* cmd,
+                   D3D12_CPU_DESCRIPTOR_HANDLE rtvColor,
+                   D3D12_CPU_DESCRIPTOR_HANDLE rtvMotion,
+                   D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h);
+
     void SetDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE dsv) { m_dsvHandle = dsv; }
 
 private:
@@ -30,6 +36,7 @@ private:
 
     ComPtr<ID3D12RootSignature> m_rootSig;
     ComPtr<ID3D12PipelineState> m_pso;
+    ComPtr<ID3D12PipelineState> m_mvPso;
     ComPtr<ID3D12Resource>      m_vertexBuffer;
     D3D12_VERTEX_BUFFER_VIEW    m_vbv = {};
     ComPtr<ID3D12Resource>      m_indexBuffer;
@@ -37,4 +44,6 @@ private:
     ComPtr<ID3D12Resource>      m_constantBuffer;
     UINT8*                      m_cbDataBegin = nullptr;
     D3D12_CPU_DESCRIPTOR_HANDLE m_dsvHandle   = {};
+    DirectX::XMFLOAT4X4         m_prevMVP     = {};
+    bool                        m_hasPrevMVP  = false;
 };

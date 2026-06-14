@@ -21,8 +21,10 @@ void ScenePass::Initialize(D3DContext& ctx, const std::wstring& shaderPath)
     ThrowIfFailed(ctx.device->CreateRootSignature(0,
         sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&m_rootSig)));
 
-    auto vs = CompileShader(shaderPath, "VSMain", "vs_5_0");
-    auto ps = CompileShader(shaderPath, "PSMain", "ps_5_0");
+    auto vs   = CompileShader(shaderPath, "VSMain",   "vs_5_0");
+    auto ps   = CompileShader(shaderPath, "PSMain",   "ps_5_0");
+    auto mvvs = CompileShader(shaderPath, "MVVSMain", "vs_5_0");
+    auto mvps = CompileShader(shaderPath, "MVPSMain", "ps_5_0");
 
     D3D12_INPUT_ELEMENT_DESC inputDescs[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0,
@@ -73,6 +75,13 @@ void ScenePass::Initialize(D3DContext& ctx, const std::wstring& shaderPath)
     psoDesc.DSVFormat             = DXGI_FORMAT_D32_FLOAT;
     psoDesc.SampleDesc.Count      = 1;
     ThrowIfFailed(ctx.device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_pso)));
+
+    // MRT PSO: same state, different VS/PS and a second RT for motion vectors.
+    psoDesc.VS                = { mvvs->GetBufferPointer(), mvvs->GetBufferSize() };
+    psoDesc.PS                = { mvps->GetBufferPointer(), mvps->GetBufferSize() };
+    psoDesc.NumRenderTargets  = 2;
+    psoDesc.RTVFormats[1]     = DXGI_FORMAT_R16G16_FLOAT;
+    ThrowIfFailed(ctx.device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&m_mvPso)));
 
     Vertex vertices[] = {
         {{-1.0f, -1.0f, -1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
@@ -160,7 +169,11 @@ void ScenePass::UpdateConstants(const Camera& camera, UINT width, UINT height)
 
     ConstantBufferData cb;
     XMStoreFloat4x4(&cb.mvp, mvp);
+    cb.mvpPrev = m_hasPrevMVP ? m_prevMVP : cb.mvp;
     memcpy(m_cbDataBegin, &cb, sizeof(cb));
+
+    XMStoreFloat4x4(&m_prevMVP, mvp);
+    m_hasPrevMVP = true;
 }
 
 void ScenePass::DrawScene(ID3D12GraphicsCommandList* cmd,
@@ -217,4 +230,35 @@ void ScenePass::DrawTo(ID3D12GraphicsCommandList* cmd,
                        D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h)
 {
     DrawScene(cmd, rtvHandle, dsvHandle, w, h);
+}
+
+void ScenePass::DrawToMRT(ID3D12GraphicsCommandList* cmd,
+                          D3D12_CPU_DESCRIPTOR_HANDLE rtvColor,
+                          D3D12_CPU_DESCRIPTOR_HANDLE rtvMotion,
+                          D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle, UINT w, UINT h)
+{
+    D3D12_VIEWPORT vp = {};
+    vp.Width    = static_cast<float>(w);
+    vp.Height   = static_cast<float>(h);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    cmd->RSSetViewports(1, &vp);
+
+    D3D12_RECT scissor = { 0, 0, static_cast<LONG>(w), static_cast<LONG>(h) };
+    cmd->RSSetScissorRects(1, &scissor);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = { rtvColor, rtvMotion };
+    cmd->OMSetRenderTargets(2, rtvs, FALSE, &dsvHandle);
+    cmd->ClearRenderTargetView(rtvColor, kClearColor, 0, nullptr);
+    const float motionClear[4] = { 0.f, 0.f, 0.f, 0.f };
+    cmd->ClearRenderTargetView(rtvMotion, motionClear, 0, nullptr);
+    cmd->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    cmd->SetPipelineState(m_mvPso.Get());
+    cmd->SetGraphicsRootSignature(m_rootSig.Get());
+    cmd->SetGraphicsRootConstantBufferView(0, m_constantBuffer->GetGPUVirtualAddress());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetVertexBuffers(0, 1, &m_vbv);
+    cmd->IASetIndexBuffer(&m_ibv);
+    cmd->DrawIndexedInstanced(36, 1, 0, 0, 0);
 }
