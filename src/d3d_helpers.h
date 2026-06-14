@@ -23,8 +23,9 @@ struct Vertex
 #pragma warning(disable: 4324)
 struct alignas(256) ConstantBufferData
 {
-    DirectX::XMFLOAT4X4 mvp;
-    DirectX::XMFLOAT4X4 mvpPrev;
+    DirectX::XMFLOAT4X4 mvp;           // jittered current  — used for rendering
+    DirectX::XMFLOAT4X4 mvpPrev;       // unjittered prev   — used for motion vectors
+    DirectX::XMFLOAT4X4 mvpUnjittered; // unjittered current — used for motion vectors
 };
 #pragma warning(pop)
 

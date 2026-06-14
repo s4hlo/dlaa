@@ -18,8 +18,10 @@ public:
 
     void OnKeyDown(WPARAM key)
     {
-        if (key == VK_ESCAPE) m_camera.DisableCapture();
-        if (key == 'C')       m_frameCapture.RequestCapture();
+        if (key == VK_ESCAPE)    m_camera.DisableCapture();
+        if (key == 'C')          m_frameCapture.RequestCapture();
+        if (key == VK_OEM_4)     m_scenePass.m_jitterScale = max(0.0f, m_scenePass.m_jitterScale - 0.5f); // [
+        if (key == VK_OEM_6)     m_scenePass.m_jitterScale += 0.5f;                                        // ]
         m_camera.OnKeyDown(key);
     }
     void OnKeyUp(WPARAM key)   { m_camera.OnKeyUp(key); }

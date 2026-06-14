@@ -3,6 +3,16 @@
 
 using namespace DirectX;
 
+namespace
+{
+    float Halton(uint32_t index, uint32_t base)
+    {
+        float f = 1.0f, r = 0.0f;
+        while (index > 0) { f /= base; r += f * (index % base); index /= base; }
+        return r;
+    }
+}
+
 void ScenePass::Initialize(D3DContext& ctx, const std::wstring& shaderPath)
 {
     D3D12_ROOT_PARAMETER rootParams[1] = {};
@@ -165,15 +175,33 @@ void ScenePass::UpdateConstants(const Camera& camera, UINT width, UINT height)
         XM_PIDIV4,
         static_cast<float>(width) / static_cast<float>(height),
         0.1f, 100.0f);
-    const XMMATRIX mvp = XMMatrixTranspose(XMMatrixIdentity() * view * proj);
+
+    // Halton(2,3) subpixel jitter, scaled by m_jitterScale (1.0 = [-0.5, 0.5] pixels).
+    const uint32_t seq   = (m_frameCount % 16) + 1; // skip index 0 (returns 0,0)
+    const float    jx_px = (Halton(seq, 2) - 0.5f) * m_jitterScale;
+    const float    jy_px = (Halton(seq, 3) - 0.5f) * m_jitterScale;
+
+    // Convert pixel offset to NDC offset and bake into projection.
+    XMFLOAT4X4 projF;
+    XMStoreFloat4x4(&projF, proj);
+    projF._31 += jx_px * 2.0f / static_cast<float>(width);
+    projF._32 += jy_px * 2.0f / static_cast<float>(height);
+    const XMMATRIX projJittered = XMLoadFloat4x4(&projF);
+
+    const XMMATRIX mvpUnjittered = XMMatrixTranspose(view * proj);
+    const XMMATRIX mvpJittered   = XMMatrixTranspose(view * projJittered);
 
     ConstantBufferData cb;
-    XMStoreFloat4x4(&cb.mvp, mvp);
-    cb.mvpPrev = m_hasPrevMVP ? m_prevMVP : cb.mvp;
+    XMStoreFloat4x4(&cb.mvp,           mvpJittered);
+    XMStoreFloat4x4(&cb.mvpUnjittered, mvpUnjittered);
+    cb.mvpPrev = m_hasPrevMVP ? m_prevMVP : cb.mvpUnjittered;
     memcpy(m_cbDataBegin, &cb, sizeof(cb));
 
-    XMStoreFloat4x4(&m_prevMVP, mvp);
+    m_jitterPrev = m_jitterCurr;
+    m_jitterCurr = { jx_px, jy_px };
+    XMStoreFloat4x4(&m_prevMVP, mvpUnjittered);
     m_hasPrevMVP = true;
+    ++m_frameCount;
 }
 
 void ScenePass::DrawScene(ID3D12GraphicsCommandList* cmd,

@@ -1,5 +1,6 @@
 #pragma once
 #include "d3d_helpers.h"
+#include <DirectXMath.h>
 #include <vector>
 
 struct D3DContext;
@@ -18,6 +19,13 @@ public:
 
     void RequestCapture()  { if (m_phase == Phase::Idle) m_phase = Phase::StorePrev; }
     bool IsPending() const { return m_phase != Phase::Idle; }
+
+    // Call before WriteToDisk with the jitter offsets (in pixels) from ScenePass.
+    void SetJitter(DirectX::XMFLOAT2 curr, DirectX::XMFLOAT2 prev)
+    {
+        m_jitterCurr = curr;
+        m_jitterPrev = prev;
+    }
 
     // Records (into the live command list) the swapchain copy + the native
     // aliased render + the two readback copies. Call after DownsamplePass and
@@ -51,6 +59,8 @@ private:
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT m_motionLayout = {};  // RG16F footprint
 
     std::vector<unsigned char> m_prevSSAA;
+    DirectX::XMFLOAT2          m_jitterCurr = {};
+    DirectX::XMFLOAT2          m_jitterPrev = {};
 
     enum class Phase : uint8_t { Idle, StorePrev, CaptureAll };
     Phase m_phase     = Phase::Idle;

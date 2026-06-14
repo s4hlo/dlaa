@@ -29,6 +29,12 @@ public:
 
     void SetDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE dsv) { m_dsvHandle = dsv; }
 
+    // Jitter scale: 1.0 = subpixel ([-0.5, 0.5] px), larger = suprpixel for testing.
+    float m_jitterScale = 1.0f;
+
+    DirectX::XMFLOAT2 GetJitterCurr() const { return m_jitterCurr; }
+    DirectX::XMFLOAT2 GetJitterPrev() const { return m_jitterPrev; }
+
 private:
     void DrawScene(ID3D12GraphicsCommandList* cmd,
                    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle,
@@ -46,4 +52,7 @@ private:
     D3D12_CPU_DESCRIPTOR_HANDLE m_dsvHandle   = {};
     DirectX::XMFLOAT4X4         m_prevMVP     = {};
     bool                        m_hasPrevMVP  = false;
+    uint32_t                    m_frameCount  = 0;
+    DirectX::XMFLOAT2           m_jitterCurr  = {};
+    DirectX::XMFLOAT2           m_jitterPrev  = {};
 };

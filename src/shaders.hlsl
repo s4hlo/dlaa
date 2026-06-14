@@ -1,7 +1,8 @@
 cbuffer ModelViewProjection : register(b0)
 {
-    matrix mvp;
-    matrix mvpPrev;
+    matrix mvp;            // jittered current
+    matrix mvpPrev;        // unjittered previous
+    matrix mvpUnjittered;  // unjittered current
 };
 
 struct VSInput
@@ -43,9 +44,9 @@ struct MVVSOutput
 MVVSOutput MVVSMain(VSInput input)
 {
     MVVSOutput o;
-    o.currClip = mul(float4(input.position, 1.0f), mvp);
-    o.prevClip = mul(float4(input.position, 1.0f), mvpPrev);
-    o.position = o.currClip;
+    o.currClip = mul(float4(input.position, 1.0f), mvpUnjittered); // clean, no jitter
+    o.prevClip = mul(float4(input.position, 1.0f), mvpPrev);       // clean, no jitter
+    o.position = mul(float4(input.position, 1.0f), mvp);           // jittered for raster
     o.color    = input.color;
     return o;
 }

@@ -366,6 +366,13 @@ void FrameCapture::WriteToDisk()
         m_motionLayout.Footprint.RowPitch, Width, Height, 4);
     WriteNpyHalf2(dir / (std::string(stem) + "_motion.npy"), motion.data(), Width, Height);
 
+    // Jitter: shape (2, 2) — [[curr_x, curr_y], [prev_x, prev_y]] in pixels.
+    const float jitterData[4] = {
+        m_jitterCurr.x, m_jitterCurr.y,
+        m_jitterPrev.x, m_jitterPrev.y,
+    };
+    WriteNpyFloat(dir / (std::string(stem) + "_jitter.npy"), jitterData, 2, 2);
+
     ++m_frameIndex;
     m_prevSSAA.clear();
     m_phase = Phase::Idle;

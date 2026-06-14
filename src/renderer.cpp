@@ -45,8 +45,10 @@ void Renderer::Render()
     ThrowIfFailed(m_ctx.swapChain->Present(1, 0));
     m_ctx.WaitForPreviousFrame();
 
-    if (doCapture)
+    if (doCapture) {
+        m_frameCapture.SetJitter(m_scenePass.GetJitterCurr(), m_scenePass.GetJitterPrev());
         m_frameCapture.WriteToDisk();
+    }
 }
 
 std::wstring Renderer::GetShaderPath() const
